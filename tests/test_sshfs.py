@@ -226,7 +226,7 @@ class TestConnectionRecovery(unittest.TestCase):
 
     user = "user"
     pasw = "pass"
-    port = 2223
+    port = 2225
 
 
     def create_test_data(self, port, test_folder):
@@ -239,6 +239,8 @@ class TestConnectionRecovery(unittest.TestCase):
 
         with sftp.openbin(f'{test_folder}/bar.txt', 'wb') as f:
             f.write(b'this is the second test')
+
+        sftp.close()
 
 
     def test_server_crash(self):
