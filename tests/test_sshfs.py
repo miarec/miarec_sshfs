@@ -229,6 +229,18 @@ class TestConnectionRecovery(unittest.TestCase):
     port = 2223
 
 
+    def create_test_data(self, port, test_folder):
+        sftp = SSHFS('localhost', self.user, self.pasw, port=port)
+
+        sftp.makedir(test_folder)
+
+        with sftp.openbin(f'{test_folder}/foo.txt', 'wb') as f:
+            f.write(b'this is a test')
+
+        with sftp.openbin(f'{test_folder}/bar.txt', 'wb') as f:
+            f.write(b'this is the second test')
+
+
     def test_server_crash(self):
 
         # ------------------------------------------
@@ -244,16 +256,11 @@ class TestConnectionRecovery(unittest.TestCase):
             # ------------------------------------------
             # Create some test files
             # ------------------------------------------
-            ssh_fs = SSHFS('localhost', self.user, self.pasw, port=self.port)
-
             test_folder = '/home/{}/{}'.format(self.user, uuid.uuid4().hex)
-            ssh_fs.makedir(test_folder)
 
-            with ssh_fs.openbin(f'{test_folder}/foo.txt', 'wb') as f:
-                f.write(b'this is a test')
+            self.create_test_data(port=self.port, test_folder=test_folder)
 
-            with ssh_fs.openbin(f'{test_folder}/bar.txt', 'wb') as f:
-                f.write(b'this is the second test')
+            ssh_fs = SSHFS('localhost', self.user, self.pasw, port=self.port)
 
             self.assertEqual(ssh_fs.listdir(test_folder), ['foo.txt', 'bar.txt'])
 
@@ -282,38 +289,17 @@ class TestConnectionRecovery(unittest.TestCase):
             # Re-start SFTP server container on the same port
             # ------------------------------------------
             sftp_container = utils.startServer(utils.docker_client, self.user, self.pasw, self.port)
+            self.create_test_data(port=self.port, test_folder=test_folder)
 
             # ------------------------------------------
             # EXPECTED: a connection to SFTP server is re-established automatically
             #           all operations succeed
             # ------------------------------------------
-
-            with self.assertRaises(fs.errors.ResourceNotFound):
-                # As we spin-up a new server, it has no previously created directory and files
-                # We expect "NotFound" error
-                self.assertEqual(ssh_fs.listdir(test_folder), ['foo.txt', 'bar.txt'])
-
-                with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
-                    data = f.read()
-                    self.assertEqual(data, b'this is a test')
-
-            # Re-create everything (directory, test files)
-            ssh_fs.makedir(test_folder)
-
-            with ssh_fs.openbin(f'{test_folder}/foo.txt', 'wb') as f:
-                f.write(b'this is a test')
-
-            with ssh_fs.openbin(f'{test_folder}/bar.txt', 'wb') as f:
-                f.write(b'this is the second test')
-
             self.assertEqual(ssh_fs.listdir(test_folder), ['foo.txt', 'bar.txt'])
 
             with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
                 data = f.read()
                 self.assertEqual(data, b'this is a test')
-
-
-
 
         finally:
             if ssh_fs:
