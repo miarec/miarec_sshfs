@@ -262,7 +262,7 @@ class TestConnectionRecovery(unittest.TestCase):
 
             ssh_fs = SSHFS('localhost', self.user, self.pasw, port=self.port)
 
-            self.assertEqual(ssh_fs.listdir(test_folder), ['foo.txt', 'bar.txt'])
+            self.assertEqual(set(ssh_fs.listdir(test_folder)), set(['foo.txt', 'bar.txt']))
 
             with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
                 data = f.read()
@@ -278,7 +278,7 @@ class TestConnectionRecovery(unittest.TestCase):
             # EXPECTED: RemoteConnectionError exception when trying to use such File System
             # ------------------------------------------
             with self.assertRaises(fs.errors.RemoteConnectionError):
-                self.assertEqual(ssh_fs.listdir(test_folder), ['foo.txt', 'bar.txt'])
+                self.assertEqual(set(ssh_fs.listdir(test_folder)), set(['foo.txt', 'bar.txt']))
 
             with self.assertRaises(fs.errors.RemoteConnectionError):
                 with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
@@ -295,7 +295,7 @@ class TestConnectionRecovery(unittest.TestCase):
             # EXPECTED: a connection to SFTP server is re-established automatically
             #           all operations succeed
             # ------------------------------------------
-            self.assertEqual(ssh_fs.listdir(test_folder), ['foo.txt', 'bar.txt'])
+            self.assertEqual(set(ssh_fs.listdir(test_folder)), set(['foo.txt', 'bar.txt']))
 
             with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
                 data = f.read()
