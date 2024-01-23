@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [v2024.1.5] - 2024-01-23
+
+[v2024.1.5]: https://github.com/miarec/miarec_sshfs/compare/v2024.1.4...v2024.1.5
+
+### Changes
+
+- Fix a potential race condition when SSHFS object is accessed by multiple threads
+- Fix socket leakage in situation when network connection is re-established
+
+
 ## [v2024.1.4] - 2024-01-23
 
 [v2024.1.4]: https://github.com/miarec/miarec_sshfs/compare/v2024.1.3...v2024.1.4

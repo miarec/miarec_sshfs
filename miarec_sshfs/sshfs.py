@@ -46,6 +46,8 @@ def get_sftp_client(fs, path=None, op=None, directory=False, reuse_sftp_client=T
     In case of RemoteConnectioError, the internal network connection will be discarded,
     and on the next operation, a new connection to remote server will be attempted.
     """
+    ssh_client = None
+    sftp_client = None
     try:
         with convert_sshfs_errors(fs=fs, path=path, op=op, directory=directory):
             with fs._lock:
@@ -53,23 +55,30 @@ def get_sftp_client(fs, path=None, op=None, directory=False, reuse_sftp_client=T
                     # Try to establish new SSH connection
                     fs._ssh_client = fs.open_ssh_client()   # this method can throw exception
                     fs._sftp_client = None
+                ssh_client = fs._ssh_client
 
                 if reuse_sftp_client:
                     # Re-use a single SFTP connection that we. Good for running FileSystem commands like "makedir, listdir"
                     if fs._sftp_client is None:
                         # Open SFTP client over SSH
-                        fs._sftp_client = fs._ssh_client.open_sftp()  # this method can throw exception
+                        fs._sftp_client = ssh_client.open_sftp()  # this method can throw exception
 
                     sftp_client = fs._sftp_client
                 else:
-                    sftp_client = fs._ssh_client.open_sftp()  # create a unique SFTP connection. Good for opening files
+                    sftp_client = ssh_client.open_sftp()  # create a unique SFTP connection. Good for opening files
 
             yield sftp_client
 
     except errors.RemoteConnectionError:
+        # Note, RemoteConnectionError could be caused by socket.timeout. Close SFTP/SSH clients to avoid memory leakage
         with fs._lock:
-            fs._ssh_client = None   # Discard the network connection. It will be reopened  on the next operation
-            fs._sftp_client = None
+            if ssh_client:
+                with ignore_network_errors(op):
+                    ssh_client.close()    # close socket to avoid memory leakage
+            if ssh_client == fs._ssh_client:
+                # Discard the network connection. It will be reopened  on the next operation
+                fs._ssh_client = None
+                fs._sftp_client = None
         raise
 
 
