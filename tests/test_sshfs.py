@@ -90,14 +90,14 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
         # Initial permissions
         info = self.fs.getinfo("test.txt", ["access"])
         self.assertEqual(info.permissions.mode, 0o644)
-        st = self.fs.delegate_fs()._sftp.stat(remote_path)
+        st = self.fs.delegate_fs()._sftp_client.stat(remote_path)
         self.assertEqual(stat.S_IMODE(st.st_mode), 0o644)
 
         # Change permissions with SSHFS._chown
         self.fs.delegate_fs()._chmod(remote_path, 0o744)
         info = self.fs.getinfo("test.txt", ["access"])
         self.assertEqual(info.permissions.mode, 0o744)
-        st = self.fs.delegate_fs()._sftp.stat(remote_path)
+        st = self.fs.delegate_fs()._sftp_client.stat(remote_path)
         self.assertEqual(stat.S_IMODE(st.st_mode), 0o744)
 
         # Change permissions with SSHFS.setinfo
@@ -105,7 +105,7 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
                         {"access": {"permissions": Permissions(mode=0o600)}})
         info = self.fs.getinfo("test.txt", ["access"])
         self.assertEqual(info.permissions.mode, 0o600)
-        st = self.fs.delegate_fs()._sftp.stat(remote_path)
+        st = self.fs.delegate_fs()._sftp_client.stat(remote_path)
         self.assertEqual(stat.S_IMODE(st.st_mode), 0o600)
 
         with self.assertRaises(fs.errors.PermissionDenied):
@@ -120,7 +120,7 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
         info = self.fs.getinfo("test.txt", namespaces=["access"])
         gid, uid = info.get('access', 'uid'), info.get('access', 'gid')
 
-        with utils.mock.patch.object(self.fs.delegate_fs()._sftp, 'chown') as chown:
+        with utils.mock.patch.object(self.fs.delegate_fs()._sftp_client, 'chown') as chown:
             self.fs.setinfo("test.txt", {'access': {'uid': None}})
             chown.assert_called_with(remote_path, uid, gid)
 
@@ -192,7 +192,7 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
         with self.fs.openbin("foo", "wb") as f:
             f.write(b"foobar")
 
-        self.fs.delegate_fs()._sftp.symlink(
+        self.fs.delegate_fs()._sftp_client.symlink(
             fs.path.join(self.test_folder, "foo"),
             fs.path.join(self.test_folder, "bar")
         )
@@ -285,14 +285,34 @@ class TestConnectionRecovery(unittest.TestCase):
 
             # ------------------------------------------
             # EXPECTED: a connection to SFTP server is re-established automatically
+            #           all operations succeed
             # ------------------------------------------
 
-            # Below tests do not pass yet!
-            # self.assertEqual(ssh_fs.listdir(test_folder), ['foo.txt', 'bar.txt'])
+            with self.assertRaises(fs.errors.ResourceNotFound):
+                # As we spin-up a new server, it has no previously created directory and files
+                # We expect "NotFound" error
+                self.assertEqual(ssh_fs.listdir(test_folder), ['foo.txt', 'bar.txt'])
 
-            # with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
-            #     data = f.read()
-            #     self.assertEqual(data, b'this is a test')
+                with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
+                    data = f.read()
+                    self.assertEqual(data, b'this is a test')
+
+            # Re-create everything (directory, test files)
+            ssh_fs.makedir(test_folder)
+
+            with ssh_fs.openbin(f'{test_folder}/foo.txt', 'wb') as f:
+                f.write(b'this is a test')
+
+            with ssh_fs.openbin(f'{test_folder}/bar.txt', 'wb') as f:
+                f.write(b'this is the second test')
+
+            self.assertEqual(ssh_fs.listdir(test_folder), ['foo.txt', 'bar.txt'])
+
+            with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
+                data = f.read()
+                self.assertEqual(data, b'this is a test')
+
+
 
 
         finally:
