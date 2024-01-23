@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [v2024.1.4] - 2024-01-23
+
+[v2024.1.4]: https://github.com/miarec/miarec_sshfs/compare/v2024.1.3...v2024.1.4
+
+### Changes
+
+- Raise `RemoteConnectionError` rater than `OperationFailed` in case of network issues  (loss of connection, timeout, etc). 
+- Automatically try to re-open SSH/SFTP connection on the next operation in case of network issues.
+  Previously, the `SSHFS` object was stuck in error state, and any operations on file system, like `openbin()`, `listdir()`, etc. were failing indefinitely.
+- Fix a leak in SSH channels (`paramiko.SFTPClient`) when files are opened and closed subsequently over the same SSH socket (`paramiko.SSHClient`).
+  Some SFTP servers limit a maximum number of SSH channels that can be opened over the same SSH socket, usually 10.
+- Raise `IOError` rather than `FSError` in file methods (`read()`, `write()`, `seek()`). Such methods can be called from the external code, where `FSError` is not catched. 
+  For example, when file-like object is passed to Apache `mod_wsgi` module, which streams the file.
+
+
 ## [v2024.1.3] - 2024-01-15
 
 [v2024.1.3]: https://github.com/miarec/miarec_sshfs/compare/v2024.1.2...v2024.1.3

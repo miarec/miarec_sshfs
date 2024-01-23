@@ -31,6 +31,7 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         super(TestSSHFS, cls).setUpClass()
+        cls.port = utils.find_available_port(begin_port=cls.port)
         cls.sftp_container = utils.startServer(
             utils.docker_client, cls.user, cls.pasw, cls.port)
 
@@ -89,14 +90,14 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
         # Initial permissions
         info = self.fs.getinfo("test.txt", ["access"])
         self.assertEqual(info.permissions.mode, 0o644)
-        st = self.fs.delegate_fs()._sftp.stat(remote_path)
+        st = self.fs.delegate_fs()._sftp_client.stat(remote_path)
         self.assertEqual(stat.S_IMODE(st.st_mode), 0o644)
 
         # Change permissions with SSHFS._chown
         self.fs.delegate_fs()._chmod(remote_path, 0o744)
         info = self.fs.getinfo("test.txt", ["access"])
         self.assertEqual(info.permissions.mode, 0o744)
-        st = self.fs.delegate_fs()._sftp.stat(remote_path)
+        st = self.fs.delegate_fs()._sftp_client.stat(remote_path)
         self.assertEqual(stat.S_IMODE(st.st_mode), 0o744)
 
         # Change permissions with SSHFS.setinfo
@@ -104,7 +105,7 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
                         {"access": {"permissions": Permissions(mode=0o600)}})
         info = self.fs.getinfo("test.txt", ["access"])
         self.assertEqual(info.permissions.mode, 0o600)
-        st = self.fs.delegate_fs()._sftp.stat(remote_path)
+        st = self.fs.delegate_fs()._sftp_client.stat(remote_path)
         self.assertEqual(stat.S_IMODE(st.st_mode), 0o600)
 
         with self.assertRaises(fs.errors.PermissionDenied):
@@ -119,7 +120,7 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
         info = self.fs.getinfo("test.txt", namespaces=["access"])
         gid, uid = info.get('access', 'uid'), info.get('access', 'gid')
 
-        with utils.mock.patch.object(self.fs.delegate_fs()._sftp, 'chown') as chown:
+        with utils.mock.patch.object(self.fs.delegate_fs()._sftp_client, 'chown') as chown:
             self.fs.setinfo("test.txt", {'access': {'uid': None}})
             chown.assert_called_with(remote_path, uid, gid)
 
@@ -191,7 +192,7 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
         with self.fs.openbin("foo", "wb") as f:
             f.write(b"foobar")
 
-        self.fs.delegate_fs()._sftp.symlink(
+        self.fs.delegate_fs()._sftp_client.symlink(
             fs.path.join(self.test_folder, "foo"),
             fs.path.join(self.test_folder, "bar")
         )
@@ -218,3 +219,94 @@ class TestSSHFS(fs.test.FSTestCases, unittest.TestCase):
         now = int(time.time())
         with utils.mock.patch("time.time", lambda: now):
             super(TestSSHFS, self).test_setinfo()
+
+
+@unittest.skipIf(utils.docker_client is None, "docker service unreachable.")
+class TestConnectionRecovery(unittest.TestCase):
+
+    user = "user"
+    pasw = "pass"
+    port = 2225
+
+
+    def create_test_data(self, port, test_folder):
+        sftp = SSHFS('localhost', self.user, self.pasw, port=port)
+
+        sftp.makedir(test_folder)
+
+        with sftp.openbin(f'{test_folder}/foo.txt', 'wb') as f:
+            f.write(b'this is a test')
+
+        with sftp.openbin(f'{test_folder}/bar.txt', 'wb') as f:
+            f.write(b'this is the second test')
+
+        sftp.close()
+
+
+    def test_server_crash(self):
+
+        # ------------------------------------------
+        # Start SFTP server in docker container
+        # ------------------------------------------
+        sftp_container = None
+        ssh_fs = None
+
+        try:
+            self.port = utils.find_available_port(begin_port=self.port)
+            sftp_container = utils.startServer(utils.docker_client, self.user, self.pasw, self.port)
+
+            # ------------------------------------------
+            # Create some test files
+            # ------------------------------------------
+            test_folder = '/home/{}/{}'.format(self.user, uuid.uuid4().hex)
+
+            self.create_test_data(port=self.port, test_folder=test_folder)
+
+            ssh_fs = SSHFS('localhost', self.user, self.pasw, port=self.port)
+
+            self.assertEqual(set(ssh_fs.listdir(test_folder)), set(['foo.txt', 'bar.txt']))
+
+            with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
+                data = f.read()
+                self.assertEqual(data, b'this is a test')
+
+            # ------------------------------------------
+            # Stop container
+            # ------------------------------------------
+            utils.stopServer(sftp_container)
+            sftp_container = None
+
+            # ------------------------------------------
+            # EXPECTED: RemoteConnectionError exception when trying to use such File System
+            # ------------------------------------------
+            with self.assertRaises(fs.errors.RemoteConnectionError):
+                self.assertEqual(set(ssh_fs.listdir(test_folder)), set(['foo.txt', 'bar.txt']))
+
+            with self.assertRaises(fs.errors.RemoteConnectionError):
+                with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
+                    data = f.read()
+                    self.assertEqual(data, b'this is a test')
+
+            # ------------------------------------------
+            # Re-start SFTP server container on the same port
+            # ------------------------------------------
+            sftp_container = utils.startServer(utils.docker_client, self.user, self.pasw, self.port)
+            self.create_test_data(port=self.port, test_folder=test_folder)
+
+            # ------------------------------------------
+            # EXPECTED: a connection to SFTP server is re-established automatically
+            #           all operations succeed
+            # ------------------------------------------
+            self.assertEqual(set(ssh_fs.listdir(test_folder)), set(['foo.txt', 'bar.txt']))
+
+            with ssh_fs.openbin(f'{test_folder}/foo.txt', 'rb') as f:
+                data = f.read()
+                self.assertEqual(data, b'this is a test')
+
+        finally:
+            if ssh_fs:
+                ssh_fs.close()
+
+            if sftp_container:
+                utils.stopServer(sftp_container)
+
