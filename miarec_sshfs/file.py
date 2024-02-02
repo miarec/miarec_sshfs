@@ -24,14 +24,18 @@ class SSHFile(RawWrapper):
         super(SSHFile, self).__init__(handler)
         self.mode = mode
 
+    def close(self):
+        if not self.closed:
+            with ignore_network_errors('closing file'):
+                super().close()
+                # Close SFTPClient (ssh channel) to avoid leak of connections
+                # Some SFTP servers set limits on how many SSH channels are opened over a single SSH socket
+                self._sftp_client.close()   
+
     def __del__(self):
         # Close this file and release a network connection when the object is destroyed by garbage collector
         # Otherwise, we may have a connection leakage
-        with ignore_network_errors('closing file'):
-            self.close()
-            # Close SFTPClient (ssh channel) to avoid leak of connections
-            # Some SFTP servers set limits on how many SSH channels are opened over a single SSH socket
-            self._sftp_client.close()   
+        self.close()
         
 
     def seek(self, offset, whence=0):  # noqa: D102
